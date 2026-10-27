@@ -4,10 +4,168 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>DeliPark Webcam Test</title>
+  <title>DeliPark Webcam</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #0f172a;
+      color: white;
+      text-align: center;
+      padding: 20px;
+      margin: 0;
+    }
+    .container {
+      max-width: 850px;
+      margin: auto;
+    }
+    video {
+      width: 100%;
+      max-height: 65vh;
+      background: #000;
+      border-radius: 12px;
+    }
+    button {
+      padding: 13px 24px;
+      margin: 8px;
+      border: 0;
+      border-radius: 8px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    #capture { background: #2563eb; color: white; }
+    #close { background: #475569; color: white; }
+    #status { color: #cbd5e1; }
+  </style>
 </head>
 <body>
-  <h1>DeliPark Lost & Found</h1>
-  <p>Halaman webcam berhasil dipublikasikan.</p>
+  <div class="container">
+    <h2>DeliPark Lost &amp; Found</h2>
+    <p id="status">Menyiapkan kamera...</p>
+    <video id="video" autoplay playsinline></video>
+    <br>
+    <button id="capture" disabled>Jepret Foto</button>
+    <button id="close">Tutup Kamera</button>
+    <canvas id="canvas" hidden></canvas>
+  </div>
+
+<script>
+(function () {
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const capture = document.getElementById('capture');
+  const status = document.getElementById('status');
+  const closeButton = document.getElementById('close');
+  let stream = null;
+  let sending = false;
+
+  function stopCamera() {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+      stream = null;
+    }
+    video.srcObject = null;
+    capture.disabled = true;
+  }
+
+  async function startCamera() {
+    try {
+      if (!navigator.mediaDevices ||
+          !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Browser tidak mendukung akses kamera.');
+      }
+
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        },
+        audio: false
+      });
+
+      video.srcObject = stream;
+      await video.play();
+
+      capture.disabled = false;
+      status.textContent =
+        'Kamera aktif. Arahkan kamera ke barang, lalu jepret foto.';
+    } catch (err) {
+      status.textContent =
+        'Kamera gagal dibuka: ' + err.message +
+        '. Periksa izin Camera pada browser.';
+    }
+  }
+
+  capture.addEventListener('click', function () {
+    if (!stream || !video.videoWidth || sending) return;
+
+    sending = true;
+    capture.disabled = true;
+    status.textContent = 'Memproses foto...';
+
+    const scale = Math.min(
+      1,
+      800 / Math.max(video.videoWidth, video.videoHeight)
+    );
+
+    canvas.width = Math.round(video.videoWidth * scale);
+    canvas.height = Math.round(video.videoHeight * scale);
+
+    canvas.getContext('2d').drawImage(
+      video, 0, 0, canvas.width, canvas.height
+    );
+
+    canvas.toBlob(function (blob) {
+      if (!blob) {
+        sending = false;
+        capture.disabled = false;
+        status.textContent = 'Gagal mengambil foto. Coba kembali.';
+        return;
+      }
+
+      const reader = new FileReader();
+
+      reader.onload = function () {
+        try {
+          if (!window.opener || window.opener.closed) {
+            throw new Error('Tab aplikasi utama tidak ditemukan.');
+          }
+
+          window.opener.postMessage({
+            type: 'DELIPARK_WEBCAM_PHOTO',
+            dataUrl: reader.result,
+            fileName: 'pc_webcam_' + Date.now() + '.jpg'
+          }, '*');
+
+          status.textContent =
+            'Foto dikirim ke aplikasi utama. Anda dapat menutup tab ini.';
+          stopCamera();
+        } catch (err) {
+          sending = false;
+          capture.disabled = false;
+          status.textContent = err.message;
+        }
+      };
+
+      reader.onerror = function () {
+        sending = false;
+        capture.disabled = false;
+        status.textContent = 'Gagal membaca hasil foto.';
+      };
+
+      reader.readAsDataURL(blob);
+    }, 'image/jpeg', 0.75);
+  });
+
+  closeButton.addEventListener('click', function () {
+    stopCamera();
+    window.close();
+    status.textContent =
+      'Kamera dihentikan. Jika tab tidak tertutup, tutup secara manual.';
+  });
+
+  window.addEventListener('pagehide', stopCamera);
+  startCamera();
+})();
+</script>
 </body>
 </html>
